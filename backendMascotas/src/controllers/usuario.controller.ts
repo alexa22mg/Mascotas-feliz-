@@ -1,3 +1,4 @@
+import { service } from '@loopback/core';
 import {
   Count,
   CountSchema,
@@ -16,15 +17,51 @@ import {
   del,
   requestBody,
   response,
+  RestHttpErrors,
+  HttpErrors,
 } from '@loopback/rest';
-import {Usuario} from '../models';
+import { Hash } from 'crypto';
+import {Credenciales, Usuario} from '../models';
 import {UsuarioRepository} from '../repositories';
+import { AutenticacionService } from '../services';
+const fetch = require ('node-fetch');
 
 export class UsuarioController {
   constructor(
     @repository(UsuarioRepository)
     public usuarioRepository : UsuarioRepository,
+    @service(AutenticacionService)
+    public ServicioAutenticacion : AutenticacionService
   ) {}
+//se genera una ruta de identificacion por el metodo post
+  @post('/identificarPersona',{
+    responses:{
+      '200':{
+        description: 'identificacion de usuarios'
+      }
+    }
+  })
+  //  se crea una funcion asincronica que devuelve los datos de autenticacion el token asignado y se crea el modelo de credenciales.
+  async identificarPersona(
+    @requestBody() Credenciales:Credenciales
+  ){
+    let p = await this.ServicioAutenticacion.IdentificarPersona(Credenciales.usuario,Credenciales.Contrasena);
+    if(p){
+      let token = this.ServicioAutenticacion.GenerarTokenJWT(p);
+      return {
+        datos:{
+          nombre: p.Nombre,
+          apellido: p.Apellido,
+          correo: p.Correo,
+          id: p.id,
+          rol: p.Rol
+        },
+        tk:token
+      }
+    }else{
+      throw new HttpErrors[401]('Datos Invalidos');
+    }
+  }
 
   @post('/usuarios')
   @response(200, {
@@ -42,9 +79,27 @@ export class UsuarioController {
         },
       },
     })
-    usuario: Omit<Usuario, 'id'>,
+  //  se genero clave 
+  //  se cifra la clave 
+  //  se asigno una contraseña 
+  //  se asigna un usuario y se crea la persona en repositorio usuario
+
+  usuario: Omit<Usuario, 'id'>,
   ): Promise<Usuario> {
-    return this.usuarioRepository.create(usuario);
+    let Clave = this.ServicioAutenticacion.GenerarClave();
+    let ClaveCifrada = this.ServicioAutenticacion.CifrarClave(Clave);
+    usuario.Contrasena = ClaveCifrada;
+    let p = await this.usuarioRepository.create(usuario);
+
+    // notificacion al usuario por medio de correo.
+    let destino = usuario.Correo;
+    let asunto = 'Registro en la plataforma';
+    let contenido = ` hola ${usuario.Nombre} ${usuario.Apellido} Bienvenido a la plataforma de Mascotas Feliz su Usuario es ${usuario.Correo} y su contraseña es ${Clave} Gracias por comenzar hacer parte de nuestra familia`;
+    fetch(`http://127.0.0.1:5000/email?correo_destino=${destino}&asunto=${asunto}&contenido=${contenido}`)
+    .then((data:any)=>{
+      console.log(data);
+    })
+    return p;
   }
 
   @get('/usuarios/count')
